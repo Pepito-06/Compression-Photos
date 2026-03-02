@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Compression Photos</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Compression Photos & Envoi Mail</h1>
+      <p>Glisse-dépose tes images ici. Elles seront compressées sous 2 Mo puis envoyées par e-mail.</p>
+
+      <div id="dropzone" class="dropzone">
+        <input id="fileInput" type="file" accept="image/*" multiple />
+        <span>Dépose des photos ici ou clique pour sélectionner</span>
+      </div>
+
+      <button id="sendBtn">Compresser et envoyer</button>
+      <pre id="status"></pre>
+    </main>
+
+    <script>
+      const dropzone = document.getElementById("dropzone");
+      const fileInput = document.getElementById("fileInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const status = document.getElementById("status");
+
+      let selectedFiles = [];
+
+      function setStatus(text, isError = false) {
+        status.textContent = text;
+        status.style.color = isError ? "#b00020" : "#00345d";
+      }
+
+      function updateSelection(files) {
+        selectedFiles = [...selectedFiles, ...files];
+        setStatus(`${selectedFiles.length} fichier(s) sélectionné(s).`);
+      }
+
+      dropzone.addEventListener("click", () => fileInput.click());
+
+      fileInput.addEventListener("change", (e) => {
+        updateSelection(Array.from(e.target.files || []));
+      });
+
+      dropzone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+
+      dropzone.addEventListener("dragleave", () => {
+        dropzone.classList.remove("dragover");
+      });
+
+      dropzone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropzone.classList.remove("dragover");
+        updateSelection(Array.from(e.dataTransfer.files || []));
+      });
+
+      sendBtn.addEventListener("click", async () => {
+        if (!selectedFiles.length) {
+          setStatus("Ajoute d'abord au moins une image.", true);
+          return;
+        }
+
+        const formData = new FormData();
+        selectedFiles.forEach((f) => formData.append("files", f));
+
+        setStatus("Traitement en cours...");
+
+        try {
+          const res = await fetch("/upload", { method: "POST", body: formData });
+          const data = await res.json();
+
+          if (!res.ok) {
+            throw new Error(data.error || "Erreur inconnue");
+          }
+
+          const lines = data.files.map(
+            (f) => `- ${f.input} => ${f.output} (${f.size_kb} KB)`
+          );
+          setStatus(`OK. E-mail envoyé.\n${lines.join("\n")}`);
+          selectedFiles = [];
+          fileInput.value = "";
+        } catch (err) {
+          setStatus(`Erreur: ${err.message}`, true);
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+services:
+  photo-compressor:
+    build: .
+    container_name: photo-compressor
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
