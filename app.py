@@ -1,6 +1,7 @@
 import io
 import os
 import smtplib
+from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Tuple
@@ -8,12 +9,23 @@ from typing import Tuple
 from flask import Flask, jsonify, render_template, request
 from PIL import Image, UnidentifiedImageError
 
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    HEIF_ENABLED = True
+except Exception:
+    HEIF_ENABLED = False
+
 MAX_SIZE_BYTES = 2 * 1024 * 1024 - 10 * 1024  # marge de securite (~10KB)
 MIN_QUALITY = 25
 START_QUALITY = 92
 RESIZE_FACTOR = 0.9
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(
+    os.getenv("MAX_UPLOAD_MB", "100")
+) * 1024 * 1024
 
 
 def getenv_required(name: str) -> str:
@@ -28,7 +40,8 @@ def compress_image_to_target(data: bytes, original_name: str) -> Tuple[bytes, st
     try:
         image = Image.open(io.BytesIO(data))
     except UnidentifiedImageError as exc:
-        raise ValueError(f"{original_name}: format d'image non reconnu") from exc
+        hint = " (HEIC/HEIF non supporte: active pillow-heif)" if not HEIF_ENABLED else ""
+        raise ValueError(f"{original_name}: format d'image non reconnu{hint}") from exc
 
     # Conversion JPEG pour une meilleure maitrise de la taille.
     if image.mode not in ("RGB", "L"):
@@ -81,7 +94,7 @@ def send_email_with_attachments(files: list[tuple[bytes, str, str]], subject: st
     msg["To"] = mail_to
     msg.set_content(
         "Les images compressees (<2Mo) sont en piece jointe.\n"
-        "Message envoye automatiquement depuis le service Raspberry Pi."
+        "Message envoye automatiquement depuis le service Docker."
     )
 
     for content, filename, mime_type in files:
@@ -93,6 +106,29 @@ def send_email_with_attachments(files: list[tuple[bytes, str, str]], subject: st
             server.starttls()
         server.login(smtp_user, smtp_password)
         server.send_message(msg)
+
+
+def maybe_archive_files(
+    originals: list[tuple[bytes, str]], compressed: list[tuple[bytes, str, str]]
+) -> None:
+    archive_root = os.getenv("ARCHIVE_DIR", "").strip()
+    if not archive_root:
+        return
+
+    run_folder = datetime.now().strftime("%Y%m%d-%H%M%S")
+    base_path = Path(archive_root) / run_folder
+    originals_path = base_path / "originals"
+    compressed_path = base_path / "compressed"
+    originals_path.mkdir(parents=True, exist_ok=True)
+    compressed_path.mkdir(parents=True, exist_ok=True)
+
+    for content, filename in originals:
+        safe_name = Path(filename).name
+        (originals_path / safe_name).write_bytes(content)
+
+    for content, filename, _ in compressed:
+        safe_name = Path(filename).name
+        (compressed_path / safe_name).write_bytes(content)
 
 
 @app.get("/")
@@ -108,12 +144,14 @@ def upload():
         return jsonify({"error": "Aucun fichier recu"}), 400
 
     compressed_files = []
+    original_files = []
     results = []
 
     for item in uploaded_files:
         if not item.filename:
             continue
         raw = item.read()
+        original_files.append((raw, item.filename))
 
         try:
             compressed, filename, mime_type = compress_image_to_target(raw, item.filename)
@@ -131,8 +169,14 @@ def upload():
     if not compressed_files:
         return jsonify({"error": "Aucune image valide traitee"}), 400
 
+    maybe_archive_files(original_files, compressed_files)
     send_email_with_attachments(compressed_files, "Photos compressees (<2Mo)")
     return jsonify({"ok": True, "files": results})
+
+
+@app.errorhandler(413)
+def payload_too_large(_):
+    return jsonify({"error": "Upload trop volumineux. Reduis le nombre de photos et reessaie."}), 413
 
 
 if __name__ == "__main__":

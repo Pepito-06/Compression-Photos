@@ -9,22 +9,41 @@
   <body>
     <main class="container">
       <h1>Compression Photos & Envoi Mail</h1>
-      <p>Glisse-dépose tes images ici. Elles seront compressées sous 2 Mo puis envoyées par e-mail.</p>
+      <p class="subtitle">
+        Compatible iPhone et Android: choisis des photos depuis la galerie, prends une photo directe,
+        puis envoie.
+      </p>
 
-      <div id="dropzone" class="dropzone">
-        <input id="fileInput" type="file" accept="image/*" multiple />
-        <span>Dépose des photos ici ou clique pour sélectionner</span>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Ajouter des photos">
+        <strong>Dépose des photos ici</strong>
+        <span>ou touche pour ouvrir la galerie</span>
       </div>
 
-      <button id="sendBtn">Compresser et envoyer</button>
+      <div class="actions">
+        <button id="galleryBtn" class="btn-secondary" type="button">Choisir des photos</button>
+        <button id="cameraBtn" class="btn-secondary" type="button">Prendre une photo</button>
+        <button id="clearBtn" class="btn-ghost" type="button">Vider</button>
+      </div>
+
+      <button id="sendBtn" class="btn-primary" type="button">Compresser et envoyer</button>
+
+      <input id="galleryInput" type="file" accept="image/*,.heic,.heif" multiple hidden />
+      <input id="cameraInput" type="file" accept="image/*,.heic,.heif" capture="environment" hidden />
+
+      <div id="count" class="count">0 fichier sélectionné</div>
       <pre id="status"></pre>
     </main>
 
     <script>
       const dropzone = document.getElementById("dropzone");
-      const fileInput = document.getElementById("fileInput");
+      const galleryBtn = document.getElementById("galleryBtn");
+      const cameraBtn = document.getElementById("cameraBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const galleryInput = document.getElementById("galleryInput");
+      const cameraInput = document.getElementById("cameraInput");
       const sendBtn = document.getElementById("sendBtn");
       const status = document.getElementById("status");
+      const count = document.getElementById("count");
 
       let selectedFiles = [];
 
@@ -33,16 +52,48 @@
         status.style.color = isError ? "#b00020" : "#00345d";
       }
 
-      function updateSelection(files) {
-        selectedFiles = [...selectedFiles, ...files];
-        setStatus(`${selectedFiles.length} fichier(s) sélectionné(s).`);
+      function updateCount() {
+        count.textContent = `${selectedFiles.length} fichier(s) sélectionné(s)`;
       }
 
-      dropzone.addEventListener("click", () => fileInput.click());
+      function dedupeAndAdd(files) {
+        const incoming = Array.from(files || []);
+        for (const file of incoming) {
+          const exists = selectedFiles.some(
+            (f) => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified
+          );
+          if (!exists) {
+            selectedFiles.push(file);
+          }
+        }
+        updateCount();
+        setStatus(`${selectedFiles.length} fichier(s) prêt(s).`);
+      }
 
-      fileInput.addEventListener("change", (e) => {
-        updateSelection(Array.from(e.target.files || []));
+      function openGallery() {
+        galleryInput.click();
+      }
+
+      dropzone.addEventListener("click", openGallery);
+      dropzone.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openGallery();
+        }
       });
+
+      galleryBtn.addEventListener("click", openGallery);
+      cameraBtn.addEventListener("click", () => cameraInput.click());
+      clearBtn.addEventListener("click", () => {
+        selectedFiles = [];
+        galleryInput.value = "";
+        cameraInput.value = "";
+        updateCount();
+        setStatus("Sélection vidée.");
+      });
+
+      galleryInput.addEventListener("change", (e) => dedupeAndAdd(e.target.files));
+      cameraInput.addEventListener("change", (e) => dedupeAndAdd(e.target.files));
 
       dropzone.addEventListener("dragover", (e) => {
         e.preventDefault();
@@ -56,7 +107,7 @@
       dropzone.addEventListener("drop", (e) => {
         e.preventDefault();
         dropzone.classList.remove("dragover");
-        updateSelection(Array.from(e.dataTransfer.files || []));
+        dedupeAndAdd(e.dataTransfer.files);
       });
 
       sendBtn.addEventListener("click", async () => {
@@ -65,10 +116,11 @@
           return;
         }
 
+        sendBtn.disabled = true;
+        setStatus("Traitement en cours...");
+
         const formData = new FormData();
         selectedFiles.forEach((f) => formData.append("files", f));
-
-        setStatus("Traitement en cours...");
 
         try {
           const res = await fetch("/upload", { method: "POST", body: formData });
@@ -78,16 +130,21 @@
             throw new Error(data.error || "Erreur inconnue");
           }
 
-          const lines = data.files.map(
-            (f) => `- ${f.input} => ${f.output} (${f.size_kb} KB)`
-          );
+          const lines = data.files.map((f) => `- ${f.input} => ${f.output} (${f.size_kb} KB)`);
           setStatus(`OK. E-mail envoyé.\n${lines.join("\n")}`);
+
           selectedFiles = [];
-          fileInput.value = "";
+          galleryInput.value = "";
+          cameraInput.value = "";
+          updateCount();
         } catch (err) {
           setStatus(`Erreur: ${err.message}`, true);
+        } finally {
+          sendBtn.disabled = false;
         }
       });
+
+      updateCount();
     </script>
   </body>
 </html>

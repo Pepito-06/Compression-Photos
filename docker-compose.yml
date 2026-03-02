@@ -6,4 +6,6 @@ services:
       - "8080:8080"
     env_file:
       - .env
+    volumes:
+      - /mnt/photo-disk/compression-data:/data
     restart: unless-stopped
